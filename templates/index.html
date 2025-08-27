@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Password Strength Checker — Demo</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="bg-light">
+  <div class="container py-5">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h3 class="card-title">🔐 Password Strength Checker</h3>
+        <p class="text-muted small">Không lưu mật khẩu. Dùng HaveIBeenPwned k-anonymity để kiểm tra rò rỉ.</p>
+
+        <div class="row g-3">
+          <div class="col-md-8">
+            <input id="pwInput" type="password" class="form-control" placeholder="Nhập mật khẩu..." />
+          </div>
+          <div class="col-md-4">
+            <button id="btnCheck" class="btn btn-primary w-100">Kiểm tra</button>
+          </div>
+        </div>
+
+        <div class="mt-3 d-flex gap-2">
+          <button id="btnFill" class="btn btn-outline-secondary">Ví dụ</button>
+          <button id="btnShow" class="btn btn-outline-info">Hiện/Ẩn</button>
+          <button id="btnCopy" class="btn btn-outline-success">Copy</button>
+        </div>
+
+        <hr>
+
+        <div id="resultArea" style="display:none;">
+          <div class="d-flex justify-content-between align-items-center">
+            <h5>Kết quả</h5>
+            <div><small id="pwLabel" class="text-muted"></small></div>
+          </div>
+
+          <div class="mb-2">
+            <div class="progress" style="height:20px;">
+              <div id="progressBar" class="progress-bar" role="progressbar" style="width:0%">0%</div>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="col-md-6">
+              <ul class="list-group mb-3">
+                <li class="list-group-item"><strong>Entropy:</strong> <span id="entropyTxt"></span> bits</li>
+                <li class="list-group-item"><strong>Pwned:</strong> <span id="pwnedTxt"></span></li>
+                <li class="list-group-item"><strong>Types:</strong> <span id="typesTxt"></span></li>
+              </ul>
+
+              <h6>Gợi ý</h6>
+              <ul id="suggestionsList"></ul>
+            </div>
+
+            <div class="col-md-6">
+              <canvas id="radarChart"></canvas>
+            </div>
+          </div>
+
+          <h6 class="mt-3">Ước lượng thời gian brute-force</h6>
+          <ul id="crackTimesList"></ul>
+        </div>
+
+        <hr>
+
+        <h5>Tạo mật khẩu mạnh</h5>
+        <div class="row g-2 align-items-center">
+          <div class="col-auto">
+            <label class="form-label">Độ dài</label>
+            <input id="genLength" type="number" value="16" min="6" max="64" class="form-control" style="width:100px;">
+          </div>
+          <div class="col-auto">
+            <div class="form-check">
+              <input id="genUpper" class="form-check-input" type="checkbox" checked>
+              <label class="form-check-label">Upper</label>
+            </div>
+            <div class="form-check">
+              <input id="genDigits" class="form-check-input" type="checkbox" checked>
+              <label class="form-check-label">Digits</label>
+            </div>
+            <div class="form-check">
+              <input id="genSpecial" class="form-check-input" type="checkbox" checked>
+              <label class="form-check-label">Special</label>
+            </div>
+          </div>
+          <div class="col-auto">
+            <button id="btnGenerate" class="btn btn-success">Generate</button>
+          </div>
+        </div>
+
+        <div class="mt-3">
+          <input id="genResult" class="form-control" readonly>
+          <div class="mt-2"><button id="btnCopyGen" class="btn btn-outline-primary">Copy Generated</button></div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+<script>
+const pwInput = document.getElementById('pwInput');
+const btnCheck = document.getElementById('btnCheck');
+const resultArea = document.getElementById('resultArea');
+const progressBar = document.getElementById('progressBar');
+const entropyTxt = document.getElementById('entropyTxt');
+const pwnedTxt = document.getElementById('pwnedTxt');
+const typesTxt = document.getElementById('typesTxt');
+const suggestionsList = document.getElementById('suggestionsList');
+const crackTimesList = document.getElementById('crackTimesList');
+const pwLabel = document.getElementById('pwLabel');
+
+let radarChart = null;
+
+function setProgress(p, cls) {
+  progressBar.style.width = p + '%';
+  progressBar.textContent = p + '%';
+  progressBar.className = 'progress-bar ' + (cls === 'strong' ? 'bg-success' : cls === 'medium' ? 'bg-warning' : 'bg-danger');
+}
+
+// AJAX check
+btnCheck.addEventListener('click', async () => {
+  const pw = pwInput.value || '';
+  if (pw.length === 0) { alert('Nhập mật khẩu'); return; }
+  const res = await fetch('/api/check', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({password: pw})
+  });
+  const j = await res.json();
+  // show
+  resultArea.style.display = 'block';
+  setProgress(j.score.percent, j.score.class);
+  entropyTxt.textContent = j.entropy_bits;
+  pwnedTxt.innerHTML = j.pwned_count > 0 ? `<span class="text-danger">Có (${j.pwned_count})</span>` : `<span class="text-success">Không</span>`;
+  typesTxt.textContent = j.score.types;
+  // suggestions
+  suggestionsList.innerHTML = '';
+  if (j.suggestions && j.suggestions.length) {
+    j.suggestions.forEach(s => {
+      const li = document.createElement('li'); li.textContent = s; suggestionsList.appendChild(li);
+    });
+  } else {
+    const li = document.createElement('li'); li.textContent = 'Mật khẩu khá tốt.'; suggestionsList.appendChild(li);
+  }
+  // crack times
+  crackTimesList.innerHTML = '';
+  for (const k of Object.keys(j.crack_times)) {
+    const li = document.createElement('li');
+    li.innerHTML = `<strong>${k.replace(/_/g,' ')}:</strong> ${j.crack_times[k]}`;
+    crackTimesList.appendChild(li);
+  }
+  // radar chart
+  const labels = ['Length','Entropy','Types','PwnedPenalty'];
+  const lengthScore = Math.min(100, (pw.length / 16) * 100);
+  const entropyScore = Math.min(100, (j.entropy_bits / 80) * 100);
+  const typesScore = (j.score.types / 4) * 100;
+  const pwnedPenalty = j.pwned_count > 0 ? 100 : 0;
+  const data = {
+    labels: labels,
+    datasets: [{
+      label: 'Password metrics',
+      data: [lengthScore, entropyScore, typesScore, pwnedPenalty],
+      fill: true,
+      backgroundColor: 'rgba(54,162,235,0.2)',
+      borderColor: 'rgb(54,162,235)',
+      pointBackgroundColor: 'rgb(54,162,235)'
+    }]
+  };
+  if (radarChart) radarChart.destroy();
+  const ctx = document.getElementById('radarChart').getContext('2d');
+  radarChart = new Chart(ctx, {type: 'radar', data: data, options: {scales:{r:{beginAtZero:true,max:100}}}});
+  // show small pw label masked
+  pwLabel.textContent = 'showing masked';
+});
+
+// Show/Hide password, Fill example, Copy
+document.getElementById('btnShow').addEventListener('click', () => {
+  pwInput.type = pwInput.type === 'password' ? 'text' : 'password';
+});
+document.getElementById('btnFill').addEventListener('click', () => pwInput.value = 'Ex@mplePass2025!');
+document.getElementById('btnCopy').addEventListener('click', async () => {
+  const v = pwInput.value;
+  if (!v) { alert('Chưa có mật khẩu để copy'); return; }
+  try { await navigator.clipboard.writeText(v); alert('Copied'); } catch(e){ alert('Copy failed'); }
+});
+
+// generator
+document.getElementById('btnGenerate').addEventListener('click', async (e) => {
+  e.preventDefault();
+  const length = Number(document.getElementById('genLength').value || 16);
+  const upper = document.getElementById('genUpper').checked;
+  const digits = document.getElementById('genDigits').checked;
+  const special = document.getElementById('genSpecial').checked;
+  const res = await fetch('/api/generate', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({length, upper, digits, special})
+  });
+  const j = await res.json();
+  document.getElementById('genResult').value = j.password;
+});
+document.getElementById('btnCopyGen').addEventListener('click', async () => {
+  const v = document.getElementById('genResult').value;
+  if (!v) return alert('Chưa có mật khẩu tạo ra');
+  try { await navigator.clipboard.writeText(v); alert('Copied generated password'); } catch(e){ alert('Copy failed'); }
+});
+</script>
+</body>
+</html>
